@@ -1,0 +1,10 @@
+{
+  "name": "nexifyup/rsync-desktop",
+  "description": "Twig frontend templates for the Rsync Desktop Tauri application",
+  "type": "project",
+  "license": "proprietary",
+  "require": {
+    "php": "^8.2",
+    "twig/twig": "^3.0"
+  }
+}

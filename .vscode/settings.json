@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^pwd && rustc --version && cargo --version && cargo tauri --version && node --version && npm --version && rsync --version \\| head -n 2 && ssh -V 2>&1 \\| head -n 1$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
