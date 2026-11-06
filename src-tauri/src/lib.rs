@@ -1,3 +1,4 @@
+mod agent_activity;
 mod filesystem;
 mod git_deploy;
 mod github_auth;
@@ -24,6 +25,9 @@ pub fn run() {
             let profiles = profiles::ProfileStore::load(profiles::storage_path(&app_data_dir))
                 .map_err(std::io::Error::other)?;
             app.manage(profiles);
+            app.manage(agent_activity::AgentActivityStore::new(
+                app_data_dir.clone(),
+            ));
             app.manage(transfers::TransferStore::default());
             app.manage(transfers::WatchStore::default());
 
@@ -38,6 +42,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             filesystem::list_local_directory,
+            agent_activity::list_agent_activity,
+            agent_activity::get_agent_mcp_config,
+            agent_activity::install_agent_mcp,
+            agent_activity::install_copilot_hooks,
             git_deploy::deploy_git_repository,
             profiles::get_profiles,
             profiles::save_profile,
@@ -59,4 +67,16 @@ pub fn run() {
 
 pub fn run_git_askpass() -> Option<i32> {
     github_auth::run_askpass()
+}
+
+pub fn run_agent_mcp_stdio() -> Result<(), String> {
+    agent_activity::run_mcp_stdio()
+}
+
+pub fn run_copilot_hook() -> Result<(), String> {
+    agent_activity::run_copilot_hook()
+}
+
+pub fn exit_agent_mode_with_error(error: String) -> ! {
+    agent_activity::exit_with_error(error)
 }

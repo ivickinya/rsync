@@ -24,6 +24,15 @@ const previewButton = document.querySelector("#preview-button");
 const startSyncButton = document.querySelector("#start-sync-button");
 const transferStatus = document.querySelector("#transfer-status");
 const transferOutput = document.querySelector("#transfer-output");
+const agentEventList = document.querySelector("#agent-event-list");
+const agentLiveState = document.querySelector("#agent-live-state");
+const agentIntegrationStatus = document.querySelector("#agent-integration-status");
+const installAgentMcpButton = document.querySelector("#install-agent-mcp-button");
+const installAgentHooksButton = document.querySelector("#install-agent-hooks-button");
+const agentClientSelect = document.querySelector("#agent-client-select");
+const agentClientHelp = document.querySelector("#agent-client-help");
+const showAgentMcpConfigButton = document.querySelector("#show-agent-mcp-config-button");
+const agentMcpConfig = document.querySelector("#agent-mcp-config");
 const watchSessionPanel = document.querySelector("#watch-session-panel");
 const watchSessionStatus = document.querySelector("#watch-session-status");
 const stopWatchButton = document.querySelector("#stop-watch-button");
@@ -69,6 +78,7 @@ let activeWatcherId = null;
 let pendingWatcherStart = false;
 let pendingWatchStatus = null;
 let watchEventsReady = false;
+let latestAgentActivitySignature = "";
 let activeDirection = "push";
 let folderBrowserRoot = "";
 let folderBrowserCurrent = "";
@@ -108,6 +118,7 @@ const viewTitles = {
   dashboard: "Dashboard",
   connections: "Connection",
   activity: "Activity",
+  "agent-activity": "AI Agent",
 };
 
 const directions = {
@@ -260,6 +271,157 @@ async function notifyTransfer(title, body) {
     transferStatus.textContent += ` Desktop notification failed: ${String(error)}`;
   }
 }
+
+function showAgentIntegrationStatus(message, state = "success") {
+  agentIntegrationStatus.textContent = message;
+  agentIntegrationStatus.dataset.state = state;
+  agentIntegrationStatus.hidden = false;
+}
+
+function renderAgentActivity(events) {
+  const signature = events.map((event) => event.id).join("|");
+  if (signature === latestAgentActivitySignature) return;
+  latestAgentActivitySignature = signature;
+  agentEventList.replaceChildren();
+
+  if (events.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "agent-event-empty";
+    empty.textContent = "Install the MCP connection or Copilot hooks to see agent activity here.";
+    agentEventList.append(empty);
+    agentLiveState.textContent = "Waiting for Copilot";
+    agentLiveState.dataset.state = "idle";
+    return;
+  }
+
+  const mostRecentSessionEvent = events.find((event) =>
+    event.eventType === "session.started" || event.eventType === "session.ended");
+  const sessionActive = mostRecentSessionEvent?.eventType === "session.started";
+  agentLiveState.textContent = sessionActive ? "Copilot session active" : "Activity received";
+  agentLiveState.dataset.state = sessionActive ? "active" : "idle";
+
+  for (const event of events) {
+    const row = document.createElement("article");
+    row.className = "agent-event-row";
+    row.dataset.type = event.eventType;
+    const dot = document.createElement("span");
+    dot.className = "agent-event-dot";
+    dot.setAttribute("aria-hidden", "true");
+    const content = document.createElement("div");
+    content.className = "agent-event-summary";
+    content.textContent = event.summary;
+    const meta = document.createElement("div");
+    meta.className = "agent-event-meta";
+    meta.textContent = [
+      event.source === "mcp" ? "MCP progress report" : "Copilot hook",
+      event.toolName ? `Tool: ${event.toolName}` : "",
+      event.sessionId ? `Session: ${event.sessionId}` : "",
+    ].filter(Boolean).join(" · ");
+    content.append(meta);
+    const time = document.createElement("time");
+    time.className = "agent-event-time";
+    time.dateTime = new Date(Number(event.createdAtMillis)).toISOString();
+    time.textContent = new Date(Number(event.createdAtMillis)).toLocaleTimeString();
+    row.append(dot, content, time);
+    agentEventList.append(row);
+  }
+}
+
+async function loadAgentActivity() {
+  if (!desktopApi?.core?.invoke) return;
+  try {
+    const events = await desktopApi.core.invoke("list_agent_activity");
+    renderAgentActivity(events);
+  } catch (error) {
+    agentLiveState.textContent = `Could not load activity: ${String(error)}`;
+    agentLiveState.dataset.state = "idle";
+  }
+}
+
+installAgentMcpButton.addEventListener("click", async () => {
+  if (!desktopApi?.core?.invoke) {
+    showAgentIntegrationStatus("MCP setup is available from the Rsync Desktop app.", "error");
+    return;
+  }
+  installAgentMcpButton.disabled = true;
+  try {
+    const client = agentClientSelect.value;
+    let workspacePath;
+    if (client === "vscode" || client === "claude-code") {
+      if (!desktopApi.dialog?.open) {
+        showAgentIntegrationStatus("Workspace selection is available from the Rsync Desktop app.", "error");
+        return;
+      }
+      workspacePath = await desktopApi.dialog.open({
+        title: `Choose the ${client === "vscode" ? "VS Code" : "Claude Code"} workspace`,
+        directory: true,
+        multiple: false,
+      });
+      if (typeof workspacePath !== "string") return;
+    }
+    const message = await desktopApi.core.invoke("install_agent_mcp", {
+      input: { client, workspacePath },
+    });
+    showAgentIntegrationStatus(message);
+  } catch (error) {
+    showAgentIntegrationStatus(`Could not configure the MCP server: ${String(error)}`, "error");
+  } finally {
+    installAgentMcpButton.disabled = false;
+  }
+});
+
+agentClientSelect.addEventListener("change", () => {
+  const help = {
+    vscode: "Adds the local server to the selected VS Code workspace's .vscode/mcp.json.",
+    "claude-code": "Adds the local server to the selected Claude Code workspace's .mcp.json.",
+    "claude-desktop": "Merges the local server into Claude Desktop's user MCP configuration.",
+    "gemini-cli": "Merges the local server into Gemini CLI's ~/.gemini/settings.json.",
+    other: "For another MCP-compatible local client, use this stdio command and environment configuration in its MCP server settings.",
+  };
+  agentClientHelp.textContent = help[agentClientSelect.value];
+  const isManual = agentClientSelect.value === "other";
+  installAgentMcpButton.hidden = isManual;
+  showAgentMcpConfigButton.hidden = !isManual;
+  agentMcpConfig.hidden = true;
+});
+
+showAgentMcpConfigButton.addEventListener("click", async () => {
+  if (!desktopApi?.core?.invoke) {
+    showAgentIntegrationStatus("MCP connection details are available from the Rsync Desktop app.", "error");
+    return;
+  }
+  showAgentMcpConfigButton.disabled = true;
+  try {
+    const config = await desktopApi.core.invoke("get_agent_mcp_config");
+    agentMcpConfig.textContent = JSON.stringify({ mcpServers: { "rsync-desktop": config } }, null, 2);
+    agentMcpConfig.hidden = false;
+  } catch (error) {
+    showAgentIntegrationStatus(`Could not get MCP setup details: ${String(error)}`, "error");
+  } finally {
+    showAgentMcpConfigButton.disabled = false;
+  }
+});
+
+installAgentHooksButton.addEventListener("click", async () => {
+  if (!desktopApi?.dialog?.confirm || !desktopApi?.core?.invoke) {
+    showAgentIntegrationStatus("Copilot hook setup is available from the Rsync Desktop app.", "error");
+    return;
+  }
+  const confirmed = await desktopApi.dialog.confirm(
+    "Install user-level VS Code Copilot hooks? They run for Copilot agent sessions across workspaces and record only event types and tool names, not prompt text, tool arguments, results, or reasoning. You can remove the generated rsync-desktop.json from ~/.copilot/hooks to uninstall.",
+    { title: "Install Copilot activity hooks", kind: "warning" },
+  );
+  if (!confirmed) return;
+  installAgentHooksButton.disabled = true;
+  try {
+    const message = await desktopApi.core.invoke("install_copilot_hooks");
+    showAgentIntegrationStatus(message);
+  } catch (error) {
+    showAgentIntegrationStatus(`Could not install Copilot hooks: ${String(error)}`, "error");
+  } finally {
+    installAgentHooksButton.disabled = false;
+  }
+});
 
 function currentTransferInput() {
   return {
@@ -1006,9 +1168,13 @@ function showCurrentView() {
   separator.textContent = "/";
   breadcrumb.replaceChildren("Workspace ", separator, ` ${viewTitles[activeView]}`);
   document.title = `${viewTitles[activeView]} | Rsync Desktop`;
+  if (activeView === "agent-activity") loadAgentActivity();
 }
 
 window.addEventListener("hashchange", showCurrentView);
+window.setInterval(() => {
+  if (window.location.hash === "#agent-activity") loadAgentActivity();
+}, 1500);
 for (const link of viewLinks) {
   link.addEventListener("click", (event) => {
     const requestedView = link.hash.slice(1);

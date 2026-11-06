@@ -8,6 +8,8 @@ The project contains a Tauri dashboard, SSH connection management, and a push/pu
 
 Watch & Sync is available for one local folder at a time. It starts only from a reviewed dry-run preview, performs the approved initial sync, then watches recursively and debounces changes for 500 ms before running an incremental rsync. It stays active until stopped or the app closes. Transfer history, streamed progress updates, and cancelling an in-progress rsync are not implemented yet.
 
+The **AI Agent** view connects local MCP-compatible clients, including VS Code Copilot, Claude Code, Claude Desktop, and Gemini CLI, to the same stdio MCP server for explicit task progress reports. Copilot hooks can separately record session, prompt-submitted, and tool start/completion events. Activity is local-only, capped at 500 events, and excludes prompt text, tool arguments/results, secrets, and private reasoning. ChatGPT's current MCP integration requires a remote endpoint; this app does not expose a network server or tunnel.
+
 Twig is rendered to static HTML before Tauri starts or builds the app. The frontend is plain HTML, CSS, and JavaScript; Node.js is not required.
 
 ---
@@ -45,6 +47,13 @@ Twig is rendered to static HTML before Tauri starts or builds the app. The front
   - After previewing a single local folder and confirming the live sync, automatically push folder changes to the selected server with a 500 ms debounce.
   - Shows watching, syncing, and error states; stop the watcher from the transfer view. Editing or deleting its connection stops the watcher after any current rsync finishes. The watcher is local to the current app session and is stopped when the app closes.
   - Protected-file exclusions remain active and remote-only files are never deleted. The feature is for local-to-remote push only.
+- 🤖 **VS Code Copilot Activity**
+  - Connect VS Code Copilot, Claude Code, Claude Desktop, or Gemini CLI to the local stdio MCP server. Workspace-based clients use workspace configuration; desktop/CLI clients use their user MCP configuration.
+  - Other local stdio-compatible MCP clients can use the generated manual configuration shown in the AI Agent view.
+  - Connected clients can use `report_agent_activity` for brief status/current-step reports and `get_agent_activity` to review recent reports.
+  - Optionally install user-level Copilot hooks to automatically capture session start/end, prompt-submitted events, and tool start/completion names.
+  - The activity page polls the local event store and displays a live timeline. It does not expose or record model reasoning, prompt content, tool inputs, or tool outputs. Start a new Copilot session after installing hooks.
+  - ChatGPT remote MCP connections are not supported by the local stdio server. No local network port or public tunnel is opened.
 
 - ⚡ **Transfer Progress** (planned)
   - Stream progress, speed, elapsed time, and ETA while a transfer runs.
@@ -106,7 +115,17 @@ Pre-configured sync profiles tailored for common server operations:
 - The transfer view reports watching, syncing, errors, and stop status. Watchers are not saved across app restarts; stop a session explicitly when finished. Editing or deleting the associated connection stops it after any current rsync finishes.
 - Only local-to-remote push is supported. Existing protected-path exclusions remain in effect; remote-only files and files deleted locally are not removed from the server.
 
-### 5. 🖥️ macOS System Integration & Developer UX
+### 5. 🤖 VS Code Copilot Activity (MCP + Hooks)
+**Status: Implemented.** The **AI Agent** page can configure a local stdio MCP connection for VS Code Copilot (`.vscode/mcp.json`), Claude Code (`.mcp.json`), Claude Desktop (user config), or Gemini CLI (`~/.gemini/settings.json`). It also displays a generic stdio config for other local MCP clients. The server exposes the same two tools to every client:
+- `report_agent_activity` records brief `working`, `completed`, or `blocked` updates.
+- `get_agent_activity` returns the sanitized recent feed.
+- **Automatic hooks:** explicitly install user-level hooks in `~/.copilot/hooks/rsync-desktop.json` to record Copilot session start/end, submitted-prompt events, and pre/post tool-use events. Restart the Copilot session after installation.
+- Both use the same local-only event store (500 newest events). Automatic hooks save event type and tool name only; prompt text, tool arguments/results, secrets, and private model reasoning are not captured.
+- The MCP progress tool is for concise, user-facing status—not chain-of-thought. If detailed progress is needed, ask the agent to report milestones through MCP.
+- Hooks follow the [VS Code agent hooks](https://code.visualstudio.com/docs/agent-customization/hooks) configuration and are installed only after explicit user confirmation.
+- ChatGPT's currently documented MCP integrations require a reachable remote MCP server. This app's stdio server remains local; enabling a secure remote bridge requires a separate authenticated/tunneled service and is not included.
+
+### 6. 🖥️ macOS System Integration & Developer UX
 - **Current:** Profile cards include an SSH Terminal action; transfer completion/failure requests native notifications.
 - **Still planned:** macOS menu bar quick-widget, verified backup/rollback, and richer notification actions/status history. SSH hooks, operational presets, and watch mode are also not implemented yet.
 - **Direct "Open SSH Terminal" Action:**
@@ -134,6 +153,7 @@ rsync/
 │   └── src/
 │       ├── main.rs            # Application entry point
 │       ├── lib.rs             # Tauri application setup and IPC registration
+│       ├── agent_activity.rs  # MCP progress tools, Copilot hooks, and local event feed
 │       ├── filesystem.rs      # Local folder listing for the file browser
 │       ├── git_deploy.rs      # Git push and safe remote fast-forward deployment
 │       ├── profiles.rs        # Local server profile storage and validation
@@ -213,6 +233,12 @@ src-tauri/target/release/bundle/dmg/
 | `start_directory_watcher` | `(preview_id)` | Runs an approved initial sync, then starts watching its single local folder |
 | `stop_directory_watcher` | `(watcher_id)` | Stops the active directory watcher after any current sync finishes |
 | `open_ssh_terminal` | `(profile_id)` | Launches user's native macOS terminal into an active SSH session *(Planned)* |
+| `list_agent_activity` | `()` | Lists up to 100 recent local, privacy-filtered agent activity events |
+| `get_agent_mcp_config` | `()` | Returns the local stdio command and environment configuration for manual MCP clients |
+| `install_agent_mcp` | `(input: { client, workspace_path? })` | Merges the Rsync Desktop stdio MCP server into VS Code, Claude Code, Claude Desktop, or Gemini CLI configuration |
+| `install_copilot_hooks` | `()` | Installs user-level VS Code Copilot lifecycle/tool hooks |
+
+The app executable also supports `--mcp` (stdio MCP server) and `--copilot-hook` (Copilot command hook input) for VS Code integration.
 
 ---
 
